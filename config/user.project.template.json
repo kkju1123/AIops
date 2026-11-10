@@ -1,0 +1,25 @@
+{
+  "llm": {
+    "apiKey": "",
+    "chatModel": "deepseek-flash",
+    "modelCapabilities": {
+      "deepseek-flash": {
+        "contextWindowTokens": 1000000
+      }
+    }
+  },
+  "clsMcpServer": {
+    "secretId": "",
+    "secretKey": ""
+  },
+  "clsLogUpload": {
+    "region": "ap-guangzhou",
+    "logsetId": "",
+    "topicId": ""
+  },
+  "observability": {
+    "awsCloudWatch": {
+      "profile": ""
+    }
+  }
+}
