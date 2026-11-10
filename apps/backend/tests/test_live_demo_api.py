@@ -12,7 +12,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 
-from super_ai.aiops.fixtures import build_live_drill_sop_documents
+from super_ai.aiops.fixtures import LIVE_DRILL_INCIDENTS, expected_knowledge_document
 from super_ai.api.app import AiopsDiagnosticRunner, create_app
 from super_ai.live_demo import (
     LIVE_DEMO_TOKEN_HEADER,
@@ -105,6 +105,7 @@ async def test_live_demo_run_uses_service_account_and_run_token(
         **cast(dict[str, Any], publisher.published[0][0]["labels"]),
         "drill_run_id": run_id,
     }
+    assert "incident_id" not in cast(dict[str, Any], publisher.published[0][0]["labels"])
 
     assert missing.status_code == 403
     assert wrong.status_code == 403
@@ -264,13 +265,10 @@ async def test_live_demo_injects_a_simulated_fault_only_in_simulator_mode(
         assert "真实日志与 SOP" in str(payload["query"])
 
 
-def test_live_drill_sop_matches_cloudwatch_fixture() -> None:
-    documents = build_live_drill_sop_documents()
-
-    assert [document.sop_id for document in documents] == ["checkout-db-pool-exhausted-sop"]
-    assert "checkout-service" in documents[0].content
-    assert "database_connection_pool_exhausted" in documents[0].content
-    assert "CloudWatch" in documents[0].content
+def test_live_drill_incident_uses_the_database_runbook() -> None:
+    assert [expected_knowledge_document(item) for item in LIVE_DRILL_INCIDENTS] == [
+        "runbook-database-contention.md"
+    ]
 
 
 def test_client_ip_only_trusts_forwarded_header_when_configured() -> None:

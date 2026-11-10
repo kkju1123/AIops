@@ -6,6 +6,7 @@ from typing import Any, cast
 
 import pytest
 
+from super_ai.aiops.fixtures import clues_for
 from super_ai.simulator import (
     SIMULATED_INCIDENTS,
     SimulatedFault,
@@ -147,3 +148,37 @@ async def test_simulator_mcp_server_serves_the_injected_fault() -> None:
     assert logs["simulated"] is True
     assert logs["records"][0]["simulation_run_id"] == "run-mcp"
     assert metrics["metrics"][0]["name"] == "kafka_consumer_group_lag"
+
+
+@pytest.mark.parametrize("incident", SIMULATED_INCIDENTS, ids=lambda item: item.incident_id)
+def test_every_scenario_surfaces_its_clues_in_notable_events(incident: Any) -> None:
+    fault = _fault(incident.incident_id)
+
+    logs = simulate_logs(fault, service=incident.service, now=NOW, limit=5)
+
+    notable = cast(list[dict[str, Any]], cast(dict[str, object], logs["summary"])["notableEvents"])
+    events = {item["event"] for item in notable}
+    assert {clue.event for clue in clues_for(incident)} <= events
+    assert "deployment_completed" in events
+
+
+def test_one_off_clue_outside_the_record_limit_is_still_summarised() -> None:
+    fault = _fault("java-ecom-promotion-cpu-saturation")
+
+    logs = simulate_logs(fault, service="promotion-service", now=NOW, limit=3)
+
+    records = cast(list[dict[str, Any]], logs["records"])
+    notable = cast(list[dict[str, Any]], cast(dict[str, object], logs["summary"])["notableEvents"])
+    assert all(record["event"] != "promotion_rule_published" for record in records)
+    published = next(item for item in notable if item["event"] == "promotion_rule_published")
+    assert published["count"] == 1
+    assert "bundle-2026-1111" in published["sample"]
+
+
+def test_unaffected_service_only_has_decoys() -> None:
+    fault = _fault("java-ecom-cart-redis-latency")
+
+    logs = simulate_logs(fault, service="payment-service", now=NOW, limit=50)
+
+    notable = cast(list[dict[str, Any]], cast(dict[str, object], logs["summary"])["notableEvents"])
+    assert {item["event"] for item in notable} <= {"deployment_completed", "gc_pause"}

@@ -8,10 +8,10 @@
 
 - 1 条带异常、指标、阈值和依赖信息的 CLS 关键日志；
 - 1 条带 `environment=test`、`fixture=java-ecommerce` 的活动告警；
-- 1 份包含告警依据、CLS 查询、根因假设、排查、恢复与验证的 Markdown SOP；
-- 1 个独立的 32 位 trace ID。
+- 1 个独立的 32 位 trace ID；
+- 1 份所属故障类别的通用排查手册（runbook），告警 annotation `runbook` 指向它。
 
-三类数据通过 `incident_id`、`service`、`alertname`、`sop` 关联，告警 annotations 和 SOP 都包含相同 trace ID。
+日志与告警通过 `incident_id`、`service`、`alertname`、`trace_id`、`runbook` 关联。10 个场景共用 7 份类别手册（下游依赖、数据库争用、缓存、CPU、消息消费、搜索集群、鉴权），手册列出多个候选根因及区分证据，**不包含任何场景的具体根因**。下表的“故障逻辑”是评测用的标准答案，只保存在 fixture 和本文档中，不会进入知识库、日志或告警。
 
 | # | Java 服务 | 告警 | 故障逻辑 |
 |---|---|---|---|
@@ -50,13 +50,13 @@
    uv run python scripts/publish_java_ecommerce_alerts.py --profile java-ecommerce
    ```
 
-5. 为配置的演示用户上传并索引 10 份 SOP：
+5. 为配置的演示用户上传并索引 7 份类别手册（同时删除旧版场景 SOP）：
 
    ```bash
-   uv run python scripts/seed_java_ecommerce_aiops_sops.py --profile java-ecommerce
+   uv run python scripts/seed_ecommerce_aiops_sop.py --profile runbooks
    ```
 
-6. 打开 AIOps 工作区，刷新活动告警，选择任一 Java 电商告警进行诊断。CLS 查询应命中告警 annotations 中的 trace ID，Planner 应能检索到同名 SOP。
+6. 打开 AIOps 工作区，刷新活动告警，选择任一 Java 电商告警进行诊断。日志查询应命中告警 annotations 中的 trace ID，Planner 应检索到该场景所属类别的手册。
 
 ## 兼容量化场景
 

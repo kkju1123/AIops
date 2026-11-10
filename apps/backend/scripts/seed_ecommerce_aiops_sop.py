@@ -1,4 +1,9 @@
-"""Upload and index the explicit e-commerce quant incident SOP through the local API."""
+"""Upload and index e-commerce AIOps knowledge documents through the local API.
+
+`--profile runbooks` (default) uploads the category troubleshooting runbooks used by the
+drill and the Java fixtures, and deletes the old scenario-specific SOPs, which contained
+each scenario's root cause. `--profile quant` uploads the quant pricing SOP.
+"""
 
 from __future__ import annotations
 
@@ -9,10 +14,7 @@ from typing import cast
 
 import httpx
 
-from super_ai.aiops.fixtures import (
-    build_java_ecommerce_sop_documents,
-    build_live_drill_sop_documents,
-)
+from super_ai.aiops.fixtures import build_runbook_documents, legacy_sop_filenames
 from super_ai.project_config import project_config_section, required_int, required_str
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -23,8 +25,8 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--profile",
-        choices=("java-ecommerce", "live-drill", "quant"),
-        default="java-ecommerce",
+        choices=("runbooks", "quant"),
+        default="runbooks",
     )
     args = parser.parse_args()
     config = project_config_section("aiopsDemo")
@@ -36,13 +38,9 @@ def main() -> None:
     if args.profile == "quant":
         documents = [(SOP_PATH.name, SOP_PATH.read_bytes())]
     else:
-        builder = (
-            build_live_drill_sop_documents
-            if args.profile == "live-drill"
-            else build_java_ecommerce_sop_documents
-        )
         documents = [
-            (document.filename, document.content.encode("utf-8")) for document in builder()
+            (document.filename, document.content.encode("utf-8"))
+            for document in build_runbook_documents()
         ]
     indexed_document_ids: list[str] = []
     with httpx.Client(base_url=base_url, timeout=15) as client:
@@ -52,6 +50,11 @@ def main() -> None:
         user_id = _string(user["id"])
         headers = {"Authorization": f"Bearer {token}"}
         knowledge_base_id = f"kb_{user_id}"
+        removed = 0
+        if args.profile == "runbooks":
+            removed = _delete_legacy_sops(
+                client, headers=headers, knowledge_base_id=knowledge_base_id
+            )
         for filename, content in documents:
             upload = client.post(
                 f"/knowledge-bases/{knowledge_base_id}/documents",
@@ -79,7 +82,31 @@ def main() -> None:
                 deadline=time.monotonic() + required_int(config, "indexWaitSeconds"),
             )
             indexed_document_ids.append(document_id)
-    print(f"Indexed {len(indexed_document_ids)} {args.profile} SOP documents for {email}.")
+    print(
+        f"Indexed {len(indexed_document_ids)} {args.profile} documents for {email}; "
+        f"removed {removed} legacy scenario SOPs."
+    )
+
+
+def _delete_legacy_sops(
+    client: httpx.Client, *, headers: dict[str, str], knowledge_base_id: str
+) -> int:
+    legacy = set(legacy_sop_filenames())
+    listing = client.get(f"/knowledge-bases/{knowledge_base_id}/documents", headers=headers)
+    listing.raise_for_status()
+    items = _object(_object(listing.json())["data"])["items"]
+    removed = 0
+    for item in cast(list[object], items) if isinstance(items, list) else []:
+        document = _object(item)
+        if document.get("filename") not in legacy:
+            continue
+        response = client.delete(
+            f"/knowledge-bases/{knowledge_base_id}/documents/{_string(document['id'])}",
+            headers=headers,
+        )
+        response.raise_for_status()
+        removed += 1
+    return removed
 
 
 def _register_or_login(

@@ -9,6 +9,7 @@ import json
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
@@ -2579,6 +2580,27 @@ def _aiops_diagnostic_runner(request: Request) -> AiopsDiagnosticRunner:
         )
         request.app.state.aiops_diagnostic_runner = runner
     return runner
+
+
+@dataclass(frozen=True, slots=True)
+class OfflineDiagnosisRuntime:
+    """The API's own diagnosis dependencies, for explicit offline evaluation scripts."""
+
+    runner: AiopsDiagnosticRunner
+    live_demo: LiveDemoService
+    repositories: MemoryRepositories
+    llm_provider: LlmProvider
+
+
+def offline_diagnosis_runtime(app: FastAPI) -> OfflineDiagnosisRuntime:
+    """Build the same runner the job worker uses, without starting the worker."""
+    request = Request({"type": "http", "app": app, "headers": []})
+    return OfflineDiagnosisRuntime(
+        runner=_aiops_diagnostic_runner(request),
+        live_demo=_live_demo_service(request),
+        repositories=_memory_repositories(request),
+        llm_provider=_llm_provider(request),
+    )
 
 
 def _document_indexing_service(request: Request) -> DocumentIndexingService:

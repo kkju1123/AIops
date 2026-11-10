@@ -194,7 +194,6 @@ def build_live_demo_alertmanager_payload(
                 "severity": incident.severity,
                 "team": "ecommerce-platform",
                 "fixture": "live-incident-drill",
-                "incident_id": incident.incident_id,
                 "drill_run_id": run_id,
             },
             "annotations": _alert_annotations(incident),

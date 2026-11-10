@@ -56,7 +56,7 @@ AWS 演示资源使用 `/super-ai/demo`、`SuperAI/Demo` 指标命名空间和�
 | `guestAccess.hourlyCreationLimit` | 全站每小时最多创建的访客数，超出返回 `BUSINESS_RATE_LIMITED` |
 | `guestAccess.chatMessagesPerHour` | 每位访客每小时可发送的对话消息数 |
 
-访客账号使用无法获知的随机密码（Argon2 哈希），不能通过 `/auth/login` 登录。访客调用创建工作台诊断、读取真实活跃告警、保存诊断为知识、上传/删除/重新索引文档、管理或检查 MCP 连接时返回 `AUTH_FORBIDDEN`。访客账号目前不会自动清理，由 `hourlyCreationLimit` 控制规模。服务账号 SOP 通过 `--profile live-drill` 与 `--profile java-ecommerce` 两次运行 `uv run python scripts/seed_ecommerce_aiops_sop.py` 索引。
+访客账号使用无法获知的随机密码（Argon2 哈希），不能通过 `/auth/login` 登录。访客调用创建工作台诊断、读取真实活跃告警、保存诊断为知识、上传/删除/重新索引文档、管理或检查 MCP 连接时返回 `AUTH_FORBIDDEN`。访客账号目前不会自动清理，由 `hourlyCreationLimit` 控制规模。服务账号的知识库通过 `uv run python scripts/seed_ecommerce_aiops_sop.py --profile runbooks` 索引 7 份按故障类别编写的排查手册（同时删除旧版场景专属 SOP）。手册不包含任何场景的具体根因；模拟器只输出指向根因的线索日志和无关的干扰事件，诊断必须从证据推断根因。
 
 模拟模式下，后端为每次运行以 stdio 启动 `python -m super_ai.simulator.server`，并通过子进程环境变量 `SUPER_AI_SIMULATED_FAULT` 传入本次注入的故障（这是进程间参数，不是项目配置）。只有同时带有 `liveDemo=true` 的演练任务才会使用模拟器，认证工作台的诊断始终走 CloudWatch。后端启动且演练开启时会在后台预热检索模型，日志事件为 `live_demo.models.warmed` 或 `live_demo.models.warmup_failed`。
 

@@ -97,7 +97,7 @@ def test_platform_installation_guides_and_log_alert_tutorial_exist() -> None:
     for expected in (
         "generate_and_upload_cls_logs.py",
         "publish_java_ecommerce_alerts.py",
-        "seed_java_ecommerce_aiops_sops.py",
+        "seed_ecommerce_aiops_sop.py --profile runbooks",
         "SearchLog",
     ):
         assert expected in tutorial

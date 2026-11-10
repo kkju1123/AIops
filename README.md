@@ -44,6 +44,7 @@ Agent Py 是一个本地优先的 AIOps 工作台。Vue 3 提供操作界面，F
 - **诊断历史与案例库**：支持按用户查询历史任务和完整证据链；成功诊断可自动或手动沉淀为用户知识库中的故障案例并参与后续检索。
 - **诊断反馈**：用户可对单个诊断步骤和最终报告提交可恢复的结构化反馈。
 - **工作台内的故障演练**：`/drill` 是工作台导航第一项（标注“模拟”）。面试官等访客无需注册，打开即自动获得独立的临时访客账号；选择场景并点击“触发故障”后，后端向 Alertmanager 发布告警，并以专用服务账号运行完整诊断（SOP 检索、DeepSeek 计划、MCP 工具调用、流式报告），页面通过 SSE 逐步展示，热状态约 25 秒完成。默认 `liveDemo.observability=simulator`：日志与指标来自仓库内的故障模拟器 MCP Server（`super_ai.simulator`），按注入的场景实时生成并标注“故障模拟器生成”，不依赖云凭据；设为 `aws-cloudwatch` 则改查 CloudWatch。事件流只使用单次运行令牌，按访客每小时、全站每日和并发上限限流，额度用尽时展示最近一次运行的报告。演练完成后可一键跳到智能诊断，回看同一次诊断的时间线、工具调用、证据链与报告（标注“故障演练 · 模拟数据”）。
+- **诊断评测**：`scripts/evaluate_drill_diagnoses.py` 对 11 个演练场景重复运行真实诊断，用 LLM 评审对照 fixture 中的标准根因打分（诊断过程看不到标准根因）。知识库只放 7 份按故障类别编写的排查手册，不含任何场景根因。改造前（场景 SOP 写着根因、日志缺少证据）根因得分 33%，33 次没有一次判为正确；改造后（类别手册 + 线索日志 + 干扰事件）33/33 正确。满分说明当前场景偏简单，方法、局限与下一步见 [演练诊断评测](docs/evaluation/drill-diagnosis.md)。
 - **访客模式**：`POST /auth/guest` 为每位访客创建临时账号（Argon2 随机密码、不可登录，会话按 `guestAccess.sessionTtlHours` 过期）。访客可触发演练、查看自己的演练诊断、只读浏览演练 SOP 库、在 `chatMessagesPerHour` 限额内对话；不能发起工作台诊断、查看真实告警、上传或删除知识、管理 MCP。顶栏始终显示“访客模式 · 演练环境”，并提供所有者登录入口。
 
 ### MCP 与外部系统
@@ -191,11 +192,10 @@ npm run dev -- --host 127.0.0.1
 
 1. 在 `config/user.project.json` 的 `aiopsDemo.password` 中设置演练服务账号密码（仅本机保存）。
 2. 启动 Alertmanager：`docker compose -f infra/compose.yaml --profile observability up -d --wait alertmanager`。
-3. 启动后端后，在 `apps/backend` 中为服务账号索引 SOP：
+3. 启动后端后，在 `apps/backend` 中为服务账号索引类别排查手册：
 
    ```bash
-   uv run python scripts/seed_ecommerce_aiops_sop.py --profile live-drill
-   uv run python scripts/seed_ecommerce_aiops_sop.py --profile java-ecommerce
+   uv run python scripts/seed_ecommerce_aiops_sop.py --profile runbooks
    ```
 
 4. 在 `config/project.json` 中把 `liveDemo.enabled` 和 `guestAccess.enabled` 设为 `true`，`liveDemo.serviceAccountEmail` 与 `aiopsDemo.email` 保持一致，然后打开 `http://127.0.0.1:5173/drill`。

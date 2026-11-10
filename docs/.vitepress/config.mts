@@ -2,6 +2,7 @@
 import { defineConfig } from "vitepress";
 
 const activeItems = [
+  { text: "2026-11-10-add-honest-drill-evaluation", link: "/changes/active/2026-11-10-add-honest-drill-evaluation/" },
   { text: "2026-11-10-add-guest-workspace-drill", link: "/changes/active/2026-11-10-add-guest-workspace-drill/" }
 ];
 

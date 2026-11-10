@@ -1,4 +1,4 @@
-"""Upload and index ten correlated Java e-commerce incident SOPs."""
+"""Upload and index the category runbooks (kept for the old command name)."""
 
 from seed_ecommerce_aiops_sop import main
 

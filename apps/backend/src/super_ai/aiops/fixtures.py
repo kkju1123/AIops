@@ -1,9 +1,25 @@
-"""Safe, explicit fixture payloads for the e-commerce quant AIOps demonstration."""
+"""Safe, explicit fixture payloads for the e-commerce AIOps demonstration.
+
+Each incident's `root_cause` is ground truth for offline evaluation only: it never
+appears in knowledge documents, logs, alerts, or simulator output."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+
+from super_ai.aiops.runbooks import (
+    RUNBOOK_AUTH_TOKEN_VALIDATION,
+    RUNBOOK_CACHE_LATENCY,
+    RUNBOOK_CPU_SATURATION,
+    RUNBOOK_DATABASE_CONTENTION,
+    RUNBOOK_DOWNSTREAM_DEPENDENCY,
+    RUNBOOK_MESSAGE_CONSUMER_LAG,
+    RUNBOOK_SEARCH_CLUSTER,
+    RUNBOOKS,
+    Runbook,
+    find_runbook,
+)
 
 QUANT_ALERT_NAME = "QuantRiskPricingLatencyHigh"
 QUANT_SERVICE = "quant-risk-service"
@@ -11,15 +27,27 @@ QUANT_SOP_ID = "ecommerce-quant-pricing-latency-sop"
 
 
 @dataclass(frozen=True, slots=True)
+class EvidenceClue:
+    """A simulator log line that points at a root cause without stating it."""
+
+    event: str
+    level: str
+    message: str
+    offset_seconds: int
+    repeat_seconds: int = 0
+    logger: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class JavaEcommerceIncident:
-    """One correlated Java e-commerce log, alert, and SOP scenario."""
+    """One correlated Java e-commerce log, alert, and runbook scenario."""
 
     incident_id: str
     trace_id: str
     service: str
     logger: str
     alert_name: str
-    sop_id: str
+    runbook_id: str
     severity: str
     symptom: str
     root_cause: str
@@ -34,11 +62,10 @@ class JavaEcommerceIncident:
 
 
 @dataclass(frozen=True, slots=True)
-class JavaEcommerceSopDocument:
-    """Generated SOP document ready for upload and indexing."""
+class KnowledgeDocument:
+    """Generated knowledge document ready for upload and indexing."""
 
-    incident_id: str
-    sop_id: str
+    document_id: str
     filename: str
     content: str
 
@@ -50,7 +77,7 @@ JAVA_ECOMMERCE_INCIDENTS: tuple[JavaEcommerceIncident, ...] = (
         service="payment-service",
         logger="com.shop.payment.gateway.PaymentGatewayClient",
         alert_name="PaymentGatewayTimeoutHigh",
-        sop_id="java-ecom-payment-gateway-timeout-sop",
+        runbook_id=RUNBOOK_DOWNSTREAM_DEPENDENCY.runbook_id,
         severity="critical",
         symptom="支付确认接口连续超时，结算请求停留在 PAYING 状态。",
         root_cause="第三方支付网关 TLS 握手延迟升高，触发 3 秒读取超时。",
@@ -76,7 +103,7 @@ JAVA_ECOMMERCE_INCIDENTS: tuple[JavaEcommerceIncident, ...] = (
         service="inventory-service",
         logger="com.shop.inventory.repository.StockReservationRepository",
         alert_name="InventoryReservationLockWaitHigh",
-        sop_id="java-ecom-inventory-lock-wait-sop",
+        runbook_id=RUNBOOK_DATABASE_CONTENTION.runbook_id,
         severity="critical",
         symptom="热门 SKU 库存预占超时，下单接口返回库存繁忙。",
         root_cause="批量补库存事务持锁时间过长，与预占库存更新发生行锁竞争。",
@@ -102,7 +129,7 @@ JAVA_ECOMMERCE_INCIDENTS: tuple[JavaEcommerceIncident, ...] = (
         service="order-service",
         logger="com.shop.order.application.OrderApplicationService",
         alert_name="OrderDatabasePoolExhausted",
-        sop_id="java-ecom-order-db-pool-exhausted-sop",
+        runbook_id=RUNBOOK_DATABASE_CONTENTION.runbook_id,
         severity="critical",
         symptom="订单创建请求排队并大量返回 503，HikariCP 无可用连接。",
         root_cause="订单详情查询遗漏分页导致慢 SQL，占满 40 个数据库连接。",
@@ -128,7 +155,7 @@ JAVA_ECOMMERCE_INCIDENTS: tuple[JavaEcommerceIncident, ...] = (
         service="cart-service",
         logger="com.shop.cart.infrastructure.RedisCartRepository",
         alert_name="CartRedisLatencyHigh",
-        sop_id="java-ecom-cart-redis-latency-sop",
+        runbook_id=RUNBOOK_CACHE_LATENCY.runbook_id,
         severity="warning",
         symptom="购物车读取延迟升高，部分用户看到购物车加载失败。",
         root_cause="Redis 热 key `cart:promotion:index` 执行大对象反序列化并阻塞事件循环。",
@@ -154,7 +181,7 @@ JAVA_ECOMMERCE_INCIDENTS: tuple[JavaEcommerceIncident, ...] = (
         service="api-gateway",
         logger="com.shop.gateway.filter.CheckoutCircuitBreakerFilter",
         alert_name="GatewayCheckoutCircuitOpen",
-        sop_id="java-ecom-gateway-circuit-open-sop",
+        runbook_id=RUNBOOK_DOWNSTREAM_DEPENDENCY.runbook_id,
         severity="critical",
         symptom="结算路由熔断器打开，网关快速失败并返回 503。",
         root_cause="inventory-service 错误率持续超过熔断阈值，半开探测仍失败。",
@@ -180,7 +207,7 @@ JAVA_ECOMMERCE_INCIDENTS: tuple[JavaEcommerceIncident, ...] = (
         service="promotion-service",
         logger="com.shop.promotion.engine.PromotionRuleEngine",
         alert_name="PromotionRuleEvaluationCpuHigh",
-        sop_id="java-ecom-promotion-cpu-saturation-sop",
+        runbook_id=RUNBOOK_CPU_SATURATION.runbook_id,
         severity="critical",
         symptom="促销试算延迟超过 2 秒，实例 CPU 持续接近满载。",
         root_cause="新上架的组合促销规则产生指数级候选组合计算。",
@@ -206,7 +233,7 @@ JAVA_ECOMMERCE_INCIDENTS: tuple[JavaEcommerceIncident, ...] = (
         service="order-event-consumer",
         logger="com.shop.order.event.OrderCreatedConsumer",
         alert_name="OrderEventConsumerLagHigh",
-        sop_id="java-ecom-order-kafka-lag-sop",
+        runbook_id=RUNBOOK_MESSAGE_CONSUMER_LAG.runbook_id,
         severity="warning",
         symptom="订单创建事件积压，积分和履约状态更新明显延迟。",
         root_cause="消费者反序列化遇到新增枚举值后持续重试同一 poison message。",
@@ -232,7 +259,7 @@ JAVA_ECOMMERCE_INCIDENTS: tuple[JavaEcommerceIncident, ...] = (
         service="product-search-service",
         logger="com.shop.search.repository.ElasticsearchProductRepository",
         alert_name="ProductSearchTimeoutHigh",
-        sop_id="java-ecom-search-es-timeout-sop",
+        runbook_id=RUNBOOK_SEARCH_CLUSTER.runbook_id,
         severity="warning",
         symptom="商品搜索请求超时，关键词搜索返回空结果或降级结果。",
         root_cause="未受限的 wildcard 查询扫描高基数字段，耗尽 Elasticsearch search 线程池。",
@@ -258,7 +285,7 @@ JAVA_ECOMMERCE_INCIDENTS: tuple[JavaEcommerceIncident, ...] = (
         service="auth-service",
         logger="com.shop.auth.jwt.JwkKeyProvider",
         alert_name="AuthJwkRefreshFailureHigh",
-        sop_id="java-ecom-auth-jwk-refresh-sop",
+        runbook_id=RUNBOOK_AUTH_TOKEN_VALIDATION.runbook_id,
         severity="critical",
         symptom="JWT 验签失败率升高，新登录和受保护 API 大量返回 401。",
         root_cause="身份提供方轮换签名 key 后，JWK 缓存因代理 DNS 故障无法刷新。",
@@ -284,7 +311,7 @@ JAVA_ECOMMERCE_INCIDENTS: tuple[JavaEcommerceIncident, ...] = (
         service="fulfillment-service",
         logger="com.shop.fulfillment.client.CarrierBookingClient",
         alert_name="FulfillmentProviderUnavailable",
-        sop_id="java-ecom-fulfillment-provider-503-sop",
+        runbook_id=RUNBOOK_DOWNSTREAM_DEPENDENCY.runbook_id,
         severity="warning",
         symptom="运单创建持续失败，已支付订单停留在待分配物流状态。",
         root_cause="主物流供应商维护期间返回 503，客户端无退避重试造成请求放大。",
@@ -431,7 +458,6 @@ def generate_java_ecommerce_incident_logs(*, now: datetime) -> list[dict[str, st
                 "incident_id": incident.incident_id,
                 "alertname": incident.alert_name,
                 "message": incident.symptom,
-                "root_cause_hint": incident.root_cause,
                 "request_id": f"fixture-request-{index + 1:02d}",
                 "trace_id": incident.trace_id,
                 "span_id": f"7a3f9b2c1d0e{index + 1:04x}",
@@ -440,7 +466,7 @@ def generate_java_ecommerce_incident_logs(*, now: datetime) -> list[dict[str, st
                 "metric_name": incident.metric_name,
                 "metric_value": incident.metric_value,
                 "threshold": incident.threshold,
-                "sop": incident.sop_id,
+                "runbook": incident.runbook_id,
             }
         )
     return logs
@@ -468,10 +494,10 @@ def build_java_ecommerce_alert_payload(now: datetime) -> list[dict[str, object]]
                     "summary": incident.symptom,
                     "description": (
                         f"{incident.metric_name}={incident.metric_value}; "
-                        f"threshold {incident.threshold}. {incident.root_cause}"
+                        f"threshold {incident.threshold}."
                     ),
                     "trace_id": incident.trace_id,
-                    "sop": incident.sop_id,
+                    "runbook": incident.runbook_id,
                     "dependency": incident.dependency,
                 },
                 "startsAt": _iso8601(alert_started_at),
@@ -483,80 +509,6 @@ def build_java_ecommerce_alert_payload(now: datetime) -> list[dict[str, object]]
             }
         )
     return alerts
-
-
-def build_java_ecommerce_sop_documents() -> list[JavaEcommerceSopDocument]:
-    """Render ten evidence-oriented Chinese SOP documents."""
-    return [
-        JavaEcommerceSopDocument(
-            incident_id=incident.incident_id,
-            sop_id=incident.sop_id,
-            filename=f"{incident.sop_id}.md",
-            content=_render_java_ecommerce_sop(incident),
-        )
-        for incident in JAVA_ECOMMERCE_INCIDENTS
-    ]
-
-
-def _render_java_ecommerce_sop(incident: JavaEcommerceIncident) -> str:
-    investigation = "\n".join(
-        f"{index}. {step}" for index, step in enumerate(incident.investigation_steps, start=1)
-    )
-    recovery = "\n".join(
-        f"{index}. {step}" for index, step in enumerate(incident.recovery_steps, start=1)
-    )
-    return f"""# {incident.alert_name} 故障处理 SOP
-
-## 适用范围
-
-- **SOP ID**: `{incident.sop_id}`
-- **Incident ID**: `{incident.incident_id}`
-- **Java 服务**: `{incident.service}`
-- **依赖组件**: `{incident.dependency}`
-- **告警级别**: `{incident.severity}`
-
-## 告警触发依据
-
-- **指标**: `{incident.metric_name}`
-- **当前观测值**: `{incident.metric_value}`
-- **触发阈值**: `{incident.threshold}`
-- **用户可见症状**: {incident.symptom}
-
-## 日志证据定位
-
-在 CLS 中使用以下条件查询本次 fixture：
-
-```text
-trace_id:{incident.trace_id} AND service:{incident.service}
-```
-
-预期命中 logger `{incident.logger}`，异常类型 `{incident.exception}`。trace ID 仅用于
-定位本场景证据，不应将其他 trace 的日志作为结论依据。
-
-## 已知根因假设
-
-{incident.root_cause}
-
-该根因必须由上述日志、依赖健康状态和指标共同验证；未获得证据时不得直接判定。
-
-## 排查步骤
-
-{investigation}
-
-## 恢复步骤
-
-{recovery}
-
-## 恢复验证
-
-{incident.verification}
-
-## 回滚与风险控制
-
-- 任何重试必须保留业务幂等键，避免重复支付、重复扣减库存或重复创建运单。
-- 若恢复动作未改善指标，应立即停止扩大变更并回滚到故障前版本或配置。
-- 报告中必须列出实际查询到的 trace、指标和工具失败项，不得补写不存在的证据。
-"""
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -575,7 +527,7 @@ CHECKOUT_DB_POOL_INCIDENT = JavaEcommerceIncident(
     service="checkout-service",
     logger="com.shop.checkout.application.CheckoutService",
     alert_name="CheckoutDatabasePoolExhausted",
-    sop_id="checkout-db-pool-exhausted-sop",
+    runbook_id=RUNBOOK_DATABASE_CONTENTION.runbook_id,
     severity="high",
     symptom="结算请求超时，错误率升高，数据库连接池无可用连接。",
     root_cause=(
@@ -608,74 +560,272 @@ CHECKOUT_DB_POOL_INCIDENT = JavaEcommerceIncident(
 LIVE_DRILL_INCIDENTS: tuple[JavaEcommerceIncident, ...] = (CHECKOUT_DB_POOL_INCIDENT,)
 
 
-def build_live_drill_sop_documents() -> list[JavaEcommerceSopDocument]:
-    """Render SOPs for live drill scenarios backed by the real CloudWatch fixture."""
+def _clue(
+    event: str,
+    level: str,
+    message: str,
+    *,
+    offset: int,
+    repeat: int = 0,
+    logger: str = "",
+) -> EvidenceClue:
+    return EvidenceClue(
+        event=event,
+        level=level,
+        message=message,
+        offset_seconds=offset,
+        repeat_seconds=repeat,
+        logger=logger,
+    )
+
+
+# Evidence that points at each scenario's root cause without stating it. Offsets are
+# relative to the fault onset; a repeat of 0 emits the clue once.
+INCIDENT_CLUES: dict[str, tuple[EvidenceClue, ...]] = {
+    "java-ecom-payment-gateway-timeout": (
+        _clue(
+            "tls_handshake_slow",
+            "WARN",
+            "TLS handshake with pay-gw.partner.example:443 took 2840ms "
+            "(dns 4ms, tcp connect 38ms); read budget 3000ms",
+            offset=0,
+            repeat=45,
+        ),
+        _clue(
+            "gateway_read_timeout",
+            "ERROR",
+            "Read timed out after 3000ms on POST /v2/payments/confirm; "
+            "handshake consumed 2790ms, server processing not started",
+            offset=20,
+            repeat=60,
+        ),
+    ),
+    "java-ecom-inventory-lock-wait": (
+        _clue(
+            "batch_job_started",
+            "INFO",
+            "stock-replenish-batch started: updating 18400 sku rows in a single transaction "
+            "txn-replenish-7f21",
+            offset=-60,
+            logger="com.shop.inventory.job.StockReplenishJob",
+        ),
+        _clue(
+            "long_transaction",
+            "WARN",
+            "Transaction txn-replenish-7f21 open for 46s holding row locks on "
+            "inventory_stock (18400 rows, not committed)",
+            offset=30,
+            repeat=60,
+        ),
+        _clue(
+            "lock_wait_timeout",
+            "ERROR",
+            "Lock wait timeout exceeded for UPDATE inventory_stock SET reserved=reserved+1 "
+            "WHERE sku_id=?; blocking transaction txn-replenish-7f21",
+            offset=10,
+            repeat=50,
+        ),
+    ),
+    "java-ecom-order-db-pool-exhausted": (
+        _clue(
+            "slow_query",
+            "WARN",
+            "Slow query 14.2s on order-mysql: SELECT * FROM order_item WHERE user_id=? "
+            "ORDER BY created_at DESC (rows_examined=412000, no LIMIT) "
+            "from GET /api/orders/{id}/details",
+            offset=0,
+            repeat=40,
+        ),
+        _clue(
+            "pool_exhausted",
+            "ERROR",
+            "HikariPool-1 - Connection is not available, request timed out after 30000ms "
+            "(total=40, active=40, idle=0, waiting=186)",
+            offset=15,
+            repeat=45,
+        ),
+    ),
+    "java-ecom-cart-redis-latency": (
+        _clue(
+            "redis_large_value",
+            "WARN",
+            "Slow Redis GET cart:promotion:index value_size=8.6MB, deserialize took 940ms "
+            "on thread lettuce-nioEventLoop-4-1",
+            offset=0,
+            repeat=40,
+        ),
+        _clue(
+            "event_loop_blocked",
+            "WARN",
+            "Netty event loop lettuce-nioEventLoop-4-1 blocked for 1210ms; "
+            "312 pending commands queued behind it (server-side latency 2ms)",
+            offset=20,
+            repeat=50,
+        ),
+    ),
+    "java-ecom-gateway-circuit-open": (
+        _clue(
+            "circuit_opened",
+            "WARN",
+            "CircuitBreaker 'inventory-service' transitioned CLOSED->OPEN: "
+            "failure rate 63.4% > threshold 50% (sliding window 100 calls)",
+            offset=0,
+            repeat=120,
+        ),
+        _clue(
+            "half_open_probe_failed",
+            "WARN",
+            "Half-open probe to inventory-service POST /api/inventory/reserve failed: "
+            "503 Service Unavailable; circuit back to OPEN",
+            offset=60,
+            repeat=60,
+        ),
+    ),
+    "java-ecom-promotion-cpu-saturation": (
+        _clue(
+            "promotion_rule_published",
+            "INFO",
+            "Promotion rule bundle-2026-1111 published: 'any 3 of 24 items' combo "
+            "stackable with 9 coupons",
+            offset=-90,
+            logger="com.shop.promotion.admin.PromotionRuleAdmin",
+        ),
+        _clue(
+            "combination_evaluation_slow",
+            "WARN",
+            "Rule bundle-2026-1111 evaluated 1048576 candidate combinations for one cart "
+            "in 1870ms",
+            offset=10,
+            repeat=35,
+        ),
+    ),
+    "java-ecom-order-kafka-lag": (
+        _clue(
+            "schema_registered",
+            "INFO",
+            "Schema registry: OrderCreated v12 registered by order-service "
+            "(field orderType adds value PRE_ORDER)",
+            offset=-120,
+            logger="com.shop.order.event.SchemaRegistryClient",
+        ),
+        _clue(
+            "deserialize_failed",
+            "ERROR",
+            "Failed to deserialize OrderCreated at partition 3 offset 884213: "
+            "unknown enum value 'PRE_ORDER' for field orderType",
+            offset=0,
+            repeat=30,
+        ),
+        _clue(
+            "retry_same_offset",
+            "WARN",
+            "Seeking back to partition 3 offset 884213 for retry attempt 57 "
+            "(no dead-letter topic configured)",
+            offset=15,
+            repeat=40,
+        ),
+    ),
+    "java-ecom-search-es-timeout": (
+        _clue(
+            "slow_search",
+            "WARN",
+            "Slow search 9.8s: wildcard query '*phone*' on field sku_title.keyword "
+            "(12.4M terms), no prefix, no size limit",
+            offset=0,
+            repeat=40,
+        ),
+        _clue(
+            "search_rejected",
+            "ERROR",
+            "EsRejectedExecutionException: rejected execution on thread_pool[search] "
+            "(queue capacity 1000, active 49/49)",
+            offset=15,
+            repeat=45,
+        ),
+    ),
+    "java-ecom-auth-jwk-refresh": (
+        _clue(
+            "unknown_kid",
+            "WARN",
+            "JWT kid=2026-11-k2 not found in cached JWK set (cached kids: 2026-08-k1); "
+            "scheduling refresh",
+            offset=0,
+            repeat=40,
+        ),
+        _clue(
+            "jwk_refresh_failed",
+            "ERROR",
+            "JWK refresh from https://idp.shop.example/.well-known/jwks.json failed: "
+            "java.net.UnknownHostException: egress-proxy.internal",
+            offset=10,
+            repeat=45,
+        ),
+    ),
+    "java-ecom-fulfillment-provider-503": (
+        _clue(
+            "provider_maintenance",
+            "WARN",
+            "primary-carrier-api returned 503 with Retry-After: 900 "
+            "(status page: scheduled maintenance 02:00-04:00)",
+            offset=0,
+            repeat=50,
+        ),
+        _clue(
+            "retry_storm",
+            "WARN",
+            "Immediate retry #8 for shipment booking (backoff=0ms, Retry-After ignored); "
+            "outbound carrier QPS 6.2x baseline",
+            offset=20,
+            repeat=40,
+        ),
+    ),
+    "checkout-db-pool-exhausted": (
+        _clue(
+            "connection_leak_detected",
+            "WARN",
+            "Hikari leak detection: connection held 47s by CheckoutService.applyCoupons() "
+            "-> CouponRepository.findAllByUser (still running)",
+            offset=0,
+            repeat=45,
+        ),
+        _clue(
+            "slow_query",
+            "WARN",
+            "Slow query 21.6s on checkout-db: SELECT * FROM coupon_usage WHERE user_id=? "
+            "(rows_examined=2100000)",
+            offset=20,
+            repeat=50,
+        ),
+    ),
+}
+
+
+def clues_for(incident: JavaEcommerceIncident) -> tuple[EvidenceClue, ...]:
+    return INCIDENT_CLUES.get(incident.incident_id, ())
+
+
+def runbook_for(incident: JavaEcommerceIncident) -> Runbook:
+    return find_runbook(incident.runbook_id)
+
+
+def build_runbook_documents() -> list[KnowledgeDocument]:
+    """Render the category runbooks indexed for drill and fixture diagnoses."""
     return [
-        JavaEcommerceSopDocument(
-            incident_id=incident.incident_id,
-            sop_id=incident.sop_id,
-            filename=f"{incident.sop_id}.md",
-            content=_render_live_drill_sop(incident),
+        KnowledgeDocument(
+            document_id=runbook.runbook_id,
+            filename=runbook.filename,
+            content=runbook.render(),
         )
-        for incident in LIVE_DRILL_INCIDENTS
+        for runbook in RUNBOOKS
     ]
 
 
-def _render_live_drill_sop(incident: JavaEcommerceIncident) -> str:
-    investigation = "\n".join(
-        f"{index}. {step}" for index, step in enumerate(incident.investigation_steps, start=1)
-    )
-    recovery = "\n".join(
-        f"{index}. {step}" for index, step in enumerate(incident.recovery_steps, start=1)
-    )
-    return f"""# {incident.alert_name} 故障处理 SOP
+def legacy_sop_filenames() -> tuple[str, ...]:
+    """Scenario-specific SOP files from before the runbook change; seeding removes them."""
+    incidents = (*JAVA_ECOMMERCE_INCIDENTS, *LIVE_DRILL_INCIDENTS)
+    return tuple(f"{incident.incident_id}-sop.md" for incident in incidents)
 
-## 适用范围
 
-- **SOP ID**: `{incident.sop_id}`
-- **服务**: `{incident.service}`
-- **依赖组件**: `{incident.dependency}`
-- **告警级别**: `{incident.severity}`
-
-## 告警触发依据
-
-- **指标**: `{incident.metric_name}`
-- **触发阈值**: `{incident.threshold}`
-- **用户可见症状**: {incident.symptom}
-
-## 日志证据定位
-
-在 AWS CloudWatch Logs Insights 中查询演示日志组：
-
-```text
-fields @timestamp, @message, service, severity, trace_id, incident_id
-| filter service = "{incident.service}"
-| sort @timestamp desc
-```
-
-关注 `event=database_connection_pool_exhausted`、`latency_ms`、`error_rate` 字段。
-日志中 `synthetic=true` 表示演示环境的合成故障，报告中应如实说明。
-
-## 常见根因假设
-
-{incident.root_cause}
-
-该假设必须由日志、连接池指标和数据库慢查询共同验证；未获得证据时不得直接判定。
-
-## 排查步骤
-
-{investigation}
-
-## 恢复步骤
-
-{recovery}
-
-## 恢复验证
-
-{incident.verification}
-
-## 风险控制
-
-- 不要通过直接扩大连接池掩盖慢查询或连接泄漏。
-- 报告中必须列出实际查询到的日志与缺失的证据，不得补写不存在的数据。
-"""
+def expected_knowledge_document(incident: JavaEcommerceIncident) -> str:
+    """Filename of the knowledge document a correct retrieval should surface."""
+    return runbook_for(incident).filename

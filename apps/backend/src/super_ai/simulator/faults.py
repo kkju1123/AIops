@@ -2,7 +2,8 @@
 
 Everything produced here is synthetic and labelled `simulated=true`. It is used only by the
 public `/live` drill through the fault simulator MCP server, never by authenticated diagnostics.
-The generator deliberately never emits an incident's root cause: the diagnosis has to infer it.
+The generator never emits an incident's root cause. It emits clue logs that point at it,
+plus unrelated decoys, so the diagnosis has to infer the cause from evidence.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from super_ai.aiops.fixtures import (
     JAVA_ECOMMERCE_INCIDENTS,
     LIVE_DRILL_INCIDENTS,
     JavaEcommerceIncident,
+    clues_for,
 )
 
 SIMULATED_FAULT_ENV = "SUPER_AI_SIMULATED_FAULT"
@@ -32,6 +34,8 @@ FAULT_LEAD = timedelta(minutes=6)
 DEFAULT_WINDOW = timedelta(minutes=30)
 MAX_WINDOW = timedelta(hours=2)
 MAX_LOG_LIMIT = 50
+# An unrelated, harmless deploy well before the fault: a deliberate red herring.
+DECOY_DEPLOY_LEAD = timedelta(minutes=18)
 MAX_METRIC_POINTS = 60
 ERROR_RATE_METRIC = "error_rate_percent"
 LATENCY_METRIC = "request_latency_p95_ms"
@@ -170,6 +174,8 @@ def simulate_logs(
                 sequence += 1
                 records.append(_fault_log(fault, endpoint, cursor, sequence, rng))
             cursor += timedelta(seconds=rng.randint(12, 24))
+        records.extend(_clue_logs(fault, endpoint, start, end, rng))
+    records.extend(_decoy_logs(fault, service, start, end, rng))
 
     records.sort(key=lambda record: str(record["@timestamp"]), reverse=True)
     errors = [record for record in records if record["level"] == "ERROR"]
@@ -187,6 +193,7 @@ def simulate_logs(
             "warnCount": len(warnings),
             "firstErrorAt": str(errors[-1]["@timestamp"]) if errors else None,
             "exceptions": exceptions,
+            "notableEvents": _notable_events(records),
         },
         "records": records[:bounded_limit],
     }
@@ -241,6 +248,110 @@ def simulate_metrics(
         "window": {"start": _iso(start), "end": _iso(end)},
         "metrics": series,
     }
+
+
+MAX_NOTABLE_EVENTS = 10
+NOTABLE_SAMPLE_CHARS = 180
+
+
+def _notable_events(records: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+    """Aggregate non-routine events over the whole window, like `stats count() by event`."""
+    grouped: dict[str, dict[str, object]] = {}
+    for record in sorted(records, key=lambda item: str(item["@timestamp"])):
+        event = str(record.get("event"))
+        if event == "request_completed":
+            continue
+        timestamp = str(record["@timestamp"])
+        entry = grouped.get(event)
+        if entry is None:
+            grouped[event] = {
+                "event": event,
+                "level": record.get("level"),
+                "count": 1,
+                "firstAt": timestamp,
+                "lastAt": timestamp,
+                "sample": str(record.get("message", ""))[:NOTABLE_SAMPLE_CHARS],
+            }
+        else:
+            entry["count"] = cast(int, entry["count"]) + 1
+            entry["lastAt"] = timestamp
+    return list(grouped.values())[:MAX_NOTABLE_EVENTS]
+
+
+def _clue_logs(
+    fault: SimulatedFault,
+    endpoint: str,
+    start: datetime,
+    end: datetime,
+    rng: random.Random,
+) -> list[dict[str, object]]:
+    incident = fault.incident
+    records: list[dict[str, object]] = []
+    for clue in clues_for(incident):
+        cursor = fault.onset + timedelta(seconds=clue.offset_seconds)
+        while cursor <= end:
+            if cursor >= start:
+                records.append(
+                    {
+                        "@timestamp": _iso(cursor),
+                        "level": clue.level,
+                        "service": incident.service,
+                        "host": f"{incident.service}-0{rng.randint(1, 3)}",
+                        "logger": clue.logger or incident.logger,
+                        "event": clue.event,
+                        "endpoint": endpoint,
+                        "trace_id": _hex(rng, 32),
+                        "message": clue.message,
+                        "simulated": True,
+                        "simulation_run_id": fault.run_id,
+                    }
+                )
+            if clue.repeat_seconds <= 0:
+                break
+            cursor += timedelta(seconds=clue.repeat_seconds)
+    return records
+
+
+def _decoy_logs(
+    fault: SimulatedFault,
+    service: str,
+    start: datetime,
+    end: datetime,
+    rng: random.Random,
+) -> list[dict[str, object]]:
+    """Unrelated but plausible events, so evidence must be read rather than pattern-matched."""
+    records: list[dict[str, object]] = []
+    deploy_at = fault.onset - DECOY_DEPLOY_LEAD
+    if start <= deploy_at <= end:
+        records.append(
+            {
+                "@timestamp": _iso(deploy_at),
+                "level": "INFO",
+                "service": service,
+                "host": f"{service}-01",
+                "event": "deployment_completed",
+                "message": f"Rolling deployment of {service} finished: log format tweak, "
+                "no code path changes",
+                "simulated": True,
+                "simulation_run_id": fault.run_id,
+            }
+        )
+    cursor = start + timedelta(seconds=rng.randint(30, 200))
+    while cursor <= end:
+        records.append(
+            {
+                "@timestamp": _iso(cursor),
+                "level": "INFO",
+                "service": service,
+                "host": f"{service}-0{rng.randint(1, 3)}",
+                "event": "gc_pause",
+                "message": f"G1 Young Generation pause {rng.randint(18, 60)}ms",
+                "simulated": True,
+                "simulation_run_id": fault.run_id,
+            }
+        )
+        cursor += timedelta(seconds=rng.randint(240, 420))
+    return records
 
 
 def _background_log(

@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import cast
 
 from super_ai.aiops.fixtures import (
     JAVA_ECOMMERCE_INCIDENTS,
+    LIVE_DRILL_INCIDENTS,
     build_java_ecommerce_alert_payload,
-    build_java_ecommerce_sop_documents,
     build_quant_alert_payload,
+    build_runbook_documents,
+    clues_for,
+    expected_knowledge_document,
     generate_java_ecommerce_incident_logs,
     generate_quant_incident_logs,
+    legacy_sop_filenames,
 )
 
 
@@ -49,25 +54,24 @@ def test_java_ecommerce_catalog_contains_ten_distinct_incidents_and_traces() -> 
     assert all(len(incident.trace_id) == 32 for incident in JAVA_ECOMMERCE_INCIDENTS)
 
 
-def test_java_ecommerce_logs_alerts_and_sops_are_correlated() -> None:
+def test_java_ecommerce_logs_alerts_and_runbooks_are_correlated() -> None:
     now = datetime(2026, 7, 11, 8, 0, tzinfo=timezone.utc)
 
     logs = generate_java_ecommerce_incident_logs(now=now)
     alerts = build_java_ecommerce_alert_payload(now)
-    documents = build_java_ecommerce_sop_documents()
+    documents = {document.filename: document for document in build_runbook_documents()}
 
-    assert len(logs) == len(alerts) == len(documents) == 10
+    assert len(logs) == len(alerts) == 10
+    assert len(documents) == 7
     alerts_by_incident = {
         cast(dict[str, str], alert["labels"])["incident_id"]: alert
         for alert in alerts
     }
-    documents_by_incident = {document.incident_id: document for document in documents}
     for log in logs:
         incident_id = log["incident_id"]
         alert = alerts_by_incident[incident_id]
         labels = cast(dict[str, str], alert["labels"])
         annotations = cast(dict[str, str], alert["annotations"])
-        document = documents_by_incident[incident_id]
 
         assert labels["service"] == log["service"]
         assert log["host"] == f"{log['service']}-01"
@@ -75,12 +79,41 @@ def test_java_ecommerce_logs_alerts_and_sops_are_correlated() -> None:
         assert labels["environment"] == "test"
         assert labels["fixture"] == "java-ecommerce"
         assert annotations["trace_id"] == log["trace_id"]
-        assert annotations["sop"] == log["sop"] == document.sop_id
-        assert log["trace_id"] in document.content
-        assert log["metric_name"] in document.content
+        assert annotations["runbook"] == log["runbook"]
+        assert f"{log['runbook']}.md" in documents
+    for document in documents.values():
+        assert "## 常见根因假设与区分证据" in document.content
         assert "## 排查步骤" in document.content
-        assert "## 恢复步骤" in document.content
+        assert "## 止血与恢复" in document.content
         assert "## 恢复验证" in document.content
+
+
+def test_ground_truth_never_reaches_runbooks_logs_or_alerts() -> None:
+    now = datetime(2026, 7, 11, 8, 0, tzinfo=timezone.utc)
+    published = json.dumps(
+        {
+            "runbooks": [document.content for document in build_runbook_documents()],
+            "logs": generate_java_ecommerce_incident_logs(now=now),
+            "alerts": build_java_ecommerce_alert_payload(now),
+        },
+        ensure_ascii=False,
+    )
+
+    for incident in (*JAVA_ECOMMERCE_INCIDENTS, *LIVE_DRILL_INCIDENTS):
+        assert incident.root_cause not in published
+        assert f"{incident.incident_id}-sop" not in published
+        assert "root_cause" not in published
+
+
+def test_every_incident_has_clues_and_a_runbook() -> None:
+    runbook_files = {document.filename for document in build_runbook_documents()}
+    for incident in (*JAVA_ECOMMERCE_INCIDENTS, *LIVE_DRILL_INCIDENTS):
+        clues = clues_for(incident)
+        assert clues, incident.incident_id
+        assert all(incident.root_cause not in clue.message for clue in clues)
+        assert expected_knowledge_document(incident) in runbook_files
+    assert "checkout-db-pool-exhausted-sop.md" in legacy_sop_filenames()
+    assert len(legacy_sop_filenames()) == 11
 
 
 def test_java_ecommerce_generated_data_contains_no_credentials() -> None:
@@ -88,7 +121,7 @@ def test_java_ecommerce_generated_data_contains_no_credentials() -> None:
     serialized = "\n".join(
         [
             *(" ".join(log.values()) for log in generate_java_ecommerce_incident_logs(now=now)),
-            *(document.content for document in build_java_ecommerce_sop_documents()),
+            *(document.content for document in build_runbook_documents()),
         ]
     ).lower()
 

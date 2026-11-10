@@ -7,6 +7,7 @@ title: OpenSpec 变更
 ## 进行中
 
 - [2026-11-10-add-guest-workspace-drill](/changes/active/2026-11-10-add-guest-workspace-drill/)
+- [2026-11-10-add-honest-drill-evaluation](/changes/active/2026-11-10-add-honest-drill-evaluation/)
 
 ## 已归档
 
